@@ -1,0 +1,68 @@
+---
+title: "Metric for Batch Effects"
+output: pdf.document
+date: "2022-10-28"
+---
+
+```{r setup, include=FALSE}
+knitr::opts.chunk$set(echo = TRUE)
+library(MASS)
+library(kBET)
+```
+
+We first set some hyper-parameters (mean and variance) for different cell types.
+
+```{r}
+cell.a.mu <- c(-5, 0)
+cell.a.sigma <- matrix(c(1, 0, 0, 1), 2, 2)
+
+cell.b.mu <- c(5, 0)
+cell.b.sigma <- matrix(c(1, 0, 0, 1), 2, 2)
+```
+
+And we also create random distributions for batch effects for different batches. The batch effects are set to be smaller than biological variance.
+
+```{r}
+batch.effect.1.mu <- c(0.2, 0.3)
+batch.effect.1.sigma <- matrix(c(0.5, 0, 0, 0.5), 2, 2)
+
+batch.effect.2.mu <- c(-0.3, -0.2)
+batch.effect.2.sigma <- matrix(c(0.5, 0, 0, 0.5), 2, 2)
+```
+
+Now, we can start creating data for batches.
+
+```{r}
+num.cells <- 1000
+batch.1.composition <- ceiling(c(0.9, 0.1) * num.cells)
+batch.2.composition <- ceiling(c(0.1, 0.9) * num.cells)
+
+# data for different batch, without batch effect
+batch.1 <- rbind(mvrnorm(n = batch.1.composition[1], cell.a.mu, cell.a.sigma),
+                 mvrnorm(n = batch.1.composition[2], cell.b.mu,  cell.b.sigma))
+batch.1 <- data.frame(batch.1)
+batch.1$cell.type <- c(rep(4, batch.1.composition[1]), rep(1, batch.1.composition[2]))
+batch.1$batch <- rep(1, nrow(batch.1))
+
+batch.2 <- rbind(mvrnorm(n = batch.2.composition[1], cell.a.mu, cell.a.sigma),
+                 mvrnorm(n = batch.2.composition[2], cell.b.mu,  cell.b.sigma))
+batch.2 <- data.frame(batch.2)
+batch.2$cell.type <- c(rep(4, batch.2.composition[1]), rep(1, batch.2.composition[2]))
+batch.2$batch <- rep(2, nrow(batch.2))
+```
+
+
+We can plot out the batches,
+
+```{r}
+plot(batch.1$X2 ~ batch.1$X1, xlab="PC1", ylab="PC2", pch=batch.1$cell.type, col="blue", xlim=c(min(batch.1$X1), max(batch.2$X1)+3), ylim=c(min(batch.1$X2)-1, max(batch.1$X2)+1))
+points(batch.2$X2 ~ batch.2$X1, pch=batch.2$cell.type, col="red")
+legend("bottomright", title="cell type", legend = c("A", "B"), pch = c(4, 1))
+legend("topright", title="batch", legend = c("1", "2"), pch = c(0, 0), col = c("red", "blue"))
+```
+
+```{r}
+data = rbind(batch.1[c("X1", "X2")], batch.2[c("X1", "X2")])
+data.batch = c(batch.1$batch, batch.2$batch)
+kBET(data, data.batch)
+```
