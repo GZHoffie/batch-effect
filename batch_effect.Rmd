@@ -8,55 +8,61 @@ date: "2022-10-28"
 library(MASS)
 library(kBET)
 library(ggplot2)
+library(lisi)
 ```
 
 We first set some hyper-parameters (mean and variance) for different cell types.
 
 ```{r}
-cell.a.mu <- c(-3, 0)
-cell.a.sigma <- matrix(c(1, 0, 0, 1), 2, 2)
-
-cell.b.mu <- c(3, 0)
-cell.b.sigma <- matrix(c(1, 0, 0, 1), 2, 2)
+cell.mu <- list(c(-3, 0), c(3, 0))
+cell.sigma <- rep(list(matrix(c(1, 0, 0, 1), 2, 2)), 2)
 ```
 
 And we also create random distributions for batch effects for different batches. The batch effects are set to be smaller than biological variance.
 
 ```{r}
 # Distribution of batch effects
-be.1.mu <- c(0, 5)
-be.1.sigma <- matrix(c(2, 0, 0, 2), 2, 2)
-
-
-be.2.mu <- c(0, -5)
-be.2.sigma <- matrix(c(0.5, 0, 0, 0.5), 2, 2)
+be.mu <- list(c(0, 1), c(1, -1))
+be.sigma <- list(matrix(c(0.5, 0, 0, 0.5), 2, 2), matrix(c(0.5, 0, 0, 0.5), 2, 2))
 ```
 
 Now, we can start creating data for batches.
 
 ```{r}
 num.cells <- 1000
-batch.1.composition <- ceiling(c(0.6, 0.4) * num.cells)
-batch.2.composition <- ceiling(c(0.4, 0.6) * num.cells)
+batch.composition <- list(c(0.7, 0.3), c(0.3, 0.7))
+generate.data <- function(num.cells, batch.composition) {
+  for (i in 1:length(batch.composition)) {
+    batch.composition[[i]] = batch.composition[[i]] * num.cells
+  }
+  
+  # data for different batch, without batch effect
+  batches <- list()
+  for (i in 1:length(batch.composition)) {
+    batch <- data.frame()
+    for (j in 1:length(cell.mu)) {
+      cells <- mvrnorm(n = batch.composition[[i]][j], cell.mu[[j]], cell.sigma[[j]])
+      cells <- data.frame(cells)
+      cells$cell.type <- j
+      batch <- rbind(batch, cells)
+    }
+    batch$batch <- as.character(i)
+    batches <- append(batches, list(batch))
+  }
 
-# data for different batch, without batch effect
-batch.1 <- rbind(mvrnorm(n = batch.1.composition[1], cell.a.mu, cell.a.sigma),
-                 mvrnorm(n = batch.1.composition[2], cell.b.mu,  cell.b.sigma))
-batch.1 <- data.frame(batch.1)
-batch.1$cell.type <- c(rep(4, batch.1.composition[1]), rep(1, batch.1.composition[2]))
-batch.1$batch <- 'A'
-
-batch.2 <- rbind(mvrnorm(n = batch.2.composition[1], cell.a.mu, cell.a.sigma),
-                 mvrnorm(n = batch.2.composition[2], cell.b.mu,  cell.b.sigma))
-batch.2 <- data.frame(batch.2)
-batch.2$cell.type <- c(rep(4, batch.2.composition[1]), rep(1, batch.2.composition[2]))
-batch.2$batch <- 'B'
-
-# data with batch effect
-batch.1.be <- batch.1[c("X1", "X2")] + mvrnorm(n = nrow(batch.1), be.1.mu, be.1.sigma)
-batch.1.be[c("cell.type", "batch")] <- batch.1[c("cell.type", "batch")]
-batch.2.be <- batch.2[c("X1", "X2")] + mvrnorm(n = nrow(batch.2), be.2.mu, be.2.sigma)
-batch.2.be[c("cell.type", "batch")] <- batch.2[c("cell.type", "batch")]
+  # data with batch effect
+  batches.be <- list()
+  for (i in 1:length(batch.composition)) {
+    be <- mvrnorm(n = nrow(batches[[i]]), be.mu[[i]], be.sigma[[i]])
+    batch.be <- batches[[i]][c("X1", "X2")] + be
+    batch.be[c("cell.type", "batch")] <- batches[[i]][c("cell.type", "batch")]
+    batches.be <- append(batches.be, list(batch.be))
+  }
+  return(list(batch=batches, batch.be=batches.be))
+}
+res <- generate.data(num.cells, batch.composition)
+batches <- res$batch
+batches.be <- res$batch.be
 ```
 
 
@@ -64,60 +70,118 @@ We can plot out the batches,
 
 ```{r}
 # function for plotting batches out
-plot_batches <- function(batch.1.df, batch.2.df, title) {
-  plot(batch.1.df$X2 ~ batch.1.df$X1, 
-       xlab = "PC1", 
-       ylab = "PC2", 
-       pch = batch.1.df$cell.type, 
-       col = "blue", 
-       xlim = c(min(batch.1.df$X1, batch.2.df$X1), max(batch.1.df$X1, batch.2.df$X1)+3), 
-       ylim = c(min(batch.1.df$X2, batch.2.df$X2)-1, max(batch.1.df$X2, batch.2.df$X2)+1),
+plot_batches <- function(batch, title) {
+  X1.min = min(batch[[1]]$X1)
+  X1.max = max(batch[[1]]$X1)
+  X2.min = min(batch[[1]]$X2)
+  X2.max = max(batch[[1]]$X2)
+  for (i in 2:length(batch)) {
+    X1.min = min(X1.min, batch[[i]]$X1)
+    X1.max = max(X1.min, batch[[i]]$X1)
+    X2.min = min(X2.min, batch[[i]]$X2)
+    X2.max = max(X2.max, batch[[i]]$X2)
+  }
+
+  
+  
+  plot(batch[[1]]$X2 ~ batch[[1]]$X1, 
+       xlab = "Gene A", 
+       ylab = "Gene B", 
+       pch = batch[[1]]$cell.type, 
+       col = 1, 
+       xlim = c(X1.min, X1.max+3), 
+       ylim = c(X2.min-1, X2.max+1),
        main = title)
-  points(batch.2.df$X2 ~ batch.2.df$X1, 
-         pch=batch.2.df$cell.type, 
-         col="red")
+  for (i in 2:length(batch)) {
+    points(batch[[i]]$X2 ~ batch[[i]]$X1, 
+           pch=batch[[i]]$cell.type, 
+           col=i)
+  }
   legend("bottomright", 
          title = "cell type", 
-         legend = c("A", "B"), 
-         pch = c(4, 1))
+         legend = letters[1:length(cell.mu)], 
+         pch = 1:length(cell.mu))
   legend("topright", 
          title = "batch", 
-         legend = c("1", "2"), 
+         legend = 1:length(be.mu), 
          pch = c(15, 15), 
-         col = c("red", "blue"))
+         col = 1:length(be.mu))
 }
-plot_batches(batch.1, batch.2, "Batches without batch effect")
+plot_batches(batches, "Batches without batch effect")
 ```
 
 ```{r}
-plot_batches(batch.1.be, batch.2.be, "Batches with batch effect")
+plot_batches(batches.be, "Batcees with batch effect")
 ```
 
 Now we can try using kBET on the dataset,
 
 ```{r}
-data <- rbind(batch.1[c("X1", "X2")], batch.2[c("X1", "X2")])
-data.batch <- c(batch.1$batch, batch.2$batch)
-#res <- kBET(data, data.batch)
+res <- generate.data(num.cells, list(c(0.1, 0.9), c(0.9, 0.1)))
+batches <- res$batch
+batches.be <- res$batches.be
+data <- NULL
+data.batch <- NULL
+for (i in 1:length(batches)) {
+  data <- rbind(data, batches[[i]][c("X1", "X2")])
+  data.batch <- c(data.batch, batches[[i]]$batch)
+}
+kBET.res <- kBET(data, data.batch)
+mean(kBET.res$stats$kBET.observed)
 ```
 
 And for data with batch effect,
 
 ```{r}
-data.be <- rbind(batch.1.be[c("X1", "X2")], batch.2.be[c("X1", "X2")])
-data.be.batch <- c(batch.1.be$batch, batch.2.be$batch)
-#res.be <- kBET(data.be, data.be.batch)
+LISI.res <- compute_lisi(data, data.frame(data.batch), "data.batch")
+mean(LISI.res$data.batch)
+```
+
+Next, we try to fit projections of each batch on individual genes.
+
+```{r}
+library(mclust)
+fit.gmm <- function(data, color, label) {
+  fit = Mclust(data, modelName = "V")
+  plot(fit, what = "density", xlim=c(-7, 7), col=color, xlab=label)
+  rug(data, col=color)
+  return(fit)
+}
+B1.X1.fit <- fit.gmm(batches.be[[1]]$X1, 1, "Batch 1 Gene A")
+B2.X1.fit <- fit.gmm(batches.be[[2]]$X1, 2, "Batch 2 Gene A")
+B1.X2.fit <- fit.gmm(batches.be[[1]]$X2, 1, "Batch 1 Gene B")
+B2.X2.fit <- fit.gmm(batches.be[[2]]$X2, 2, "Batch 2 Gene B")
+fit <- list(list(B1.X1.fit, B2.X1.fit), list(B1.X2.fit, B2.X2.fit))
+
+```
+
+We can do resampling based on the fitted GMM.
+
+```{r}
+lm.data <- NULL
+for (i in 1:length(be.mu)) {
+  resample.data <- NULL
+  for (j in 1:length(B1.X1.fit$parameters$pro)) {
+    resample <- rnorm(n = 1000 * fit[[1]][[i]]$parameters$pro[j], mean =  fit[[1]][[i]]$parameters$mean[j], sd = sqrt(fit[[1]][[i]]$parameters$variance$sigmasq[j]))
+    resample <- data.frame(Y = resample, GC = as.character(j))
+    resample.data <- rbind(resample.data, resample)
+  }
+  resample.data$batch <- as.character(i)
+  hist(resample.data$Y)
+  lm.data <- rbind(lm.data, resample.data)
+}
+
+
 ```
 
 
 
 ```{r}
-data$batch = data.batch
-ggplot(data, aes(X1, fill = batch)) + geom_density(alpha = 0.2)
+X1.lm <- lm(Y~GC + batch, lm.data)
+summary(X1.lm)
+
 ```
 
-
 ```{r}
-data.be$batch = data.batch
-ggplot(data.be, aes(X2, fill = batch)) + geom_density(alpha = 0.2)
+ggplot(lm.data, aes(x = batch, y = Y)) + geom_boxplot() 
 ```
